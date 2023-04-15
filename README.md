@@ -15,4 +15,4 @@ Agent in the form of a blue cube has to find its way to the green cube while onl
 ### Structure of repository: 
    
     gym-examples/gym-game contains the environment code based on gym tutorial
-    gym-examples/train-gridpaht contains Jupyter notebook with training code based on pytorch tutorial
+    gym-examples/train-gridpath contains Jupyter notebook with training code based on pytorch tutorial
