@@ -2,26 +2,32 @@ import gym
 from gym import spaces
 import pygame
 import numpy as np
+import collections
 
 
 class GridWorldEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
 
-    def __init__(self, render_mode=None, size=30):
+    def __init__(self, render_mode=None, size=15):
 
-        self.screen_width = 401
-        self.screen_height = 1172
+        # set containing all visited cells in the current game
+        self.visited_cells = set()
 
+        # bool checking if agent visited a cell that was already visited in the current game
+        self.revisited_cell = False
+        
         # The size of a single grid square in pixels
         self.pix_square_size = size
 
         # background image with tracks
-        self.map = pygame.image.load("./afbeeldingen/straat_padded.png")
+        self.map = pygame.image.load("./afbeeldingen/straat_meer_bochten_links.png")
+        self.screen_width = 1230
+        self.screen_height = 855
 
         # list with the four corner points of the agent
         self.four_points = []
 
-        # bool dat weergeeft of agent nog niet gecrashed is
+        # bool that looks if agent has collided with the border
         self.is_dead = False
 
         # Observations are dictionaries with the agent's and the target's location.
@@ -47,8 +53,8 @@ class GridWorldEnv(gym.Env):
             1: np.array([0, 1]),
             2: np.array([-1, 0]),
             3: np.array([0, -1]),
-            # tijdelijke noop
-            # 4: np.array([0,0])
+            # noop for testing with keyboard
+            4: np.array([0,0])
         }
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
@@ -68,23 +74,27 @@ class GridWorldEnv(gym.Env):
         return {"agent": self._agent_location, "target": self._target_location}
 
     def _get_info(self):
+        # Euclidian distance (l2 norm)
         return {
             "distance": np.linalg.norm(
-                self._agent_location - self._target_location, ord=1
+                self._agent_location - self._target_location, ord=2
             )
         }
 
     def reset(self, seed=None, options=None):
 
+        # reset the set with visited cells
+        self.visited_cells.clear()
+
         # startpunt van agent (vastgezet op bepaalde pixels), positie afhankelijk van gridcelgrootte
-        coo_agent_x = int(90/ self.pix_square_size)
-        coo_agent_y = int(990/self.pix_square_size)
+        coo_agent_x = int(555/ self.pix_square_size)
+        coo_agent_y = int(795/self.pix_square_size)
 
         self._agent_location = np.array([coo_agent_x, coo_agent_y], dtype=np.int32)
 
         # targetlocatie
-        coo_target_x = int(240/ self.pix_square_size)
-        coo_target_y = int(120/self.pix_square_size)
+        coo_target_x = int(675/ self.pix_square_size)
+        coo_target_y = int(75/self.pix_square_size)
 
         self._target_location = np.array([coo_target_x, coo_target_y], dtype=np.int32)
 
@@ -102,11 +112,40 @@ class GridWorldEnv(gym.Env):
     def check_collision(self):
         self.is_dead = False
         for p in self.four_points:
-            # kijken of punt wit is
-            if self.map.get_at((int(p[0]*self.pix_square_size), int(p[1]*self.pix_square_size))) == (255, 255, 255):
+            # print(f"punt: {p[0]},{p[1]}")
+            # print(f"kleurwaard: {self.map.get_at((int(p[0]*self.pix_square_size), int(p[1]*self.pix_square_size)))}")
+            GRAY_THRESHOLD = 110
+            color = self.map.get_at((int(p[0]*self.pix_square_size), int(p[1]*self.pix_square_size)))
+            gray_value = (color[0] + color[1] + color[2]) // 3
+            # look if one of the four corner points of the agent overlaps white pixel on canvas (aka crashed)
+            if gray_value >= GRAY_THRESHOLD:
                 # print(f"punt: {p[0]},{p[1]} => DEAD")
                 self.is_dead = True
                 break
+
+    def normalize_distance_and_transform_to_reward(self, distance):
+        # maximum possible distance (when agent is at the bottom left corner )
+        max_distance = 50.0
+        # when agent reached target
+        min_distance = 0.0
+
+        normalized_distance = (distance - min_distance) / (max_distance - min_distance) 
+
+        # [0.4 - 1]
+        normalized_scaled = normalized_distance * 0.6 + 0.4
+
+        # when distance is max, reward will be 0
+        # when distance is min (1 cell of target), reward will be 0.6
+        reversed_normalized = 1 - normalized_scaled
+
+        if self.revisited_cell:
+            self.revisited_cell = False
+            # punish if revisited cell
+            reversed_normalized = reversed_normalized - 0.6
+        
+        return reversed_normalized
+    
+
 
     def step(self, action):
         # Map the action (element of {0,1,2,3}) to the direction we walk in
@@ -114,6 +153,14 @@ class GridWorldEnv(gym.Env):
 
         # change position of agent (position is top left corner)
         self._agent_location = self._agent_location + direction
+
+
+        agent_location_tuple = tuple(self._agent_location)
+        # check if agent already visited the cell
+        if self.visited_cells.__contains__(agent_location_tuple):
+            self.revisited_cell = True
+        else:
+            self.visited_cells.add(agent_location_tuple)
 
         # caculate 4 collision points
         left_top = self._agent_location
@@ -127,28 +174,28 @@ class GridWorldEnv(gym.Env):
         # check if agent collided with the border
         self.check_collision()
 
+        # punishing when colliding with the edge
+        if self.is_dead:
+            self._agent_location = self._agent_location - direction
+            observation = self._get_obs()
+            info = self._get_info()
+            self.is_dead = False
+            reward = -1
+            return observation, reward, False, False, info
+        
         observation = self._get_obs()
         info = self._get_info()
-
-        # An episode is done if the agent has collided with the border 
-        if self.is_dead:
-            
-            # mogelijkheid 1: stoppen aan bordern
-            # direction terug aftrekken want mag niet af pad gaan
-            self._agent_location = self._agent_location - direction
-            self.is_dead = False
-
-
-            # mogelijkheid 2: punishen of crashen
-            # reward = -1
-            # terminated = True
-            # return observation, reward, False, False, info
         
-        # or reached the target
+        # checking if agent reached the target
         terminated = np.array_equal( self._agent_location, self._target_location)
 
-        reward = 1 if terminated else -0.1  # Binary sparse rewards
-
+        # if target reached, full reward
+        if terminated:
+            reward = 2500
+        else:
+            distance = info["distance"]
+            # import ipdb; ipdb.set_trace()
+            reward = self.normalize_distance_and_transform_to_reward(distance)
 
         if self.render_mode == "human":
             self._render_frame()
@@ -168,13 +215,13 @@ class GridWorldEnv(gym.Env):
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
 
-        canvas = pygame.image.load("./afbeeldingen/straat_padded.png")
+        canvas = pygame.image.load("./afbeeldingen/straat_meer_bochten_links.png")
         
 
         # First we draw the target
         pygame.draw.rect(
             canvas,
-            (255, 0, 0),
+            (0, 255, 0),
             # syntax: Rect(top_left_corner_postion, (width, height))
             pygame.Rect(
                 self.pix_square_size * self._target_location,
@@ -195,7 +242,7 @@ class GridWorldEnv(gym.Env):
 
         # Finally, add some gridlines (gridlines om actiespace te visualiseren)
 
-        # horizontale lijnen
+        # # horizontale lijnen
         # for x in range(self.screen_height + 1):
         #     # syntax line(surface, color, start_pos, end_pos) -> Rect
         #     pygame.draw.line(
