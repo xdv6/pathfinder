@@ -9,12 +9,6 @@ class GridWorldEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 4}
 
     def __init__(self, render_mode=None, size=15):
-
-        # set containing all visited cells in the current game
-        self.visited_cells = set()
-
-        # bool checking if agent visited a cell that was already visited in the current game
-        self.revisited_cell = False
         
         # The size of a single grid square in pixels
         self.pix_square_size = size
@@ -54,7 +48,7 @@ class GridWorldEnv(gym.Env):
             2: np.array([-1, 0]),
             3: np.array([0, -1]),
             # noop for testing with keyboard
-            4: np.array([0,0])
+            # 4: np.array([0,0])
         }
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
@@ -82,9 +76,6 @@ class GridWorldEnv(gym.Env):
         }
 
     def reset(self, seed=None, options=None):
-
-        # reset the set with visited cells
-        self.visited_cells.clear()
 
         # startpunt van agent (vastgezet op bepaalde pixels), positie afhankelijk van gridcelgrootte
         coo_agent_x = int(555/ self.pix_square_size)
@@ -123,27 +114,22 @@ class GridWorldEnv(gym.Env):
                 self.is_dead = True
                 break
 
-    def normalize_distance_and_transform_to_reward(self, distance):
-        # maximum possible distance (when agent is at the bottom left corner )
-        max_distance = 50.0
-        # when agent reached target
-        min_distance = 0.0
+    def normalize_distance_and_transform_to_reward(self, distance, previous_distance):
+        # # maximum possible distance (when agent is at the bottom left corner )
+        # max_distance = 50.0
+        # # when agent reached target
+        # min_distance = 0.0
 
-        normalized_distance = (distance - min_distance) / (max_distance - min_distance) 
+        # normalized_distance = (distance - min_distance) / (max_distance - min_distance) 
 
-        # [0.4 - 1]
-        normalized_scaled = normalized_distance * 0.6 + 0.4
+        # # [0.4 - 1]
+        # normalized_scaled = normalized_distance * 0.6 + 0.4
 
-        # when distance is max, reward will be 0
-        # when distance is min (1 cell of target), reward will be 0.6
-        reversed_normalized = 1 - normalized_scaled
-
-        if self.revisited_cell:
-            self.revisited_cell = False
-            # punish if revisited cell
-            reversed_normalized = reversed_normalized - 0.6
+        # # when distance is max, reward will be 0
+        # # when distance is min (1 cell of target), reward will be 0.6
+        # reversed_normalized = 1 - normalized_scaled
         
-        return reversed_normalized
+        return previous_distance - distance
     
 
 
@@ -151,16 +137,12 @@ class GridWorldEnv(gym.Env):
         # Map the action (element of {0,1,2,3}) to the direction we walk in
         direction = self._action_to_direction[action]
 
+        # distance of previous step 
+        info = self._get_info()
+        previous_distance = info["distance"]
+
         # change position of agent (position is top left corner)
         self._agent_location = self._agent_location + direction
-
-
-        agent_location_tuple = tuple(self._agent_location)
-        # check if agent already visited the cell
-        if self.visited_cells.__contains__(agent_location_tuple):
-            self.revisited_cell = True
-        else:
-            self.visited_cells.add(agent_location_tuple)
 
         # caculate 4 collision points
         left_top = self._agent_location
@@ -195,7 +177,7 @@ class GridWorldEnv(gym.Env):
         else:
             distance = info["distance"]
             # import ipdb; ipdb.set_trace()
-            reward = self.normalize_distance_and_transform_to_reward(distance)
+            reward = self.normalize_distance_and_transform_to_reward(distance, previous_distance)
 
         if self.render_mode == "human":
             self._render_frame()
